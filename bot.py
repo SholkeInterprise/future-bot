@@ -1,6 +1,6 @@
 import requests
 from flask import Flask, jsonify, render_template_string, request
-import os, time
+import os, time, threading
 
 app = Flask(__name__)
 
@@ -9,8 +9,9 @@ STATE = {
     "locked_inr": 0.0,
     "pos": None,
     "history": [],
-    "settings": {"auto": True, "leverage": 10, "amount": 1000, "tp": 1.0, "sl": 0.5, "trail": 0.5, "auto_pct": 0.5},
+    "settings": {"auto": True, "leverage": 10, "amount": 1000, "tp": 1.0, "sl": 0.5, "trail": 0.5, "auto_pct": 0.5, "auto_coin": "BTC"},
 }
+COINS = ["BTC","ETH","SOL","DOGE","XRP","ADA","BNB"]
 
 def get_data_coin(coin, interval="1m"):
     pair = f"I-{coin}_INR"
@@ -81,12 +82,54 @@ def open_pos(coin, side, entry_inr, auto=False):
     STATE["history"].insert(0, f"{coin} {side} {'AUTO' if auto else 'MANUAL'} Open @ ₹{entry_inr:,.2f} | Amt ₹{s['amount']} Lev {s['leverage']}x")
     return True
 
+def check_trade_logic(coin, price_inr, candles):
+    # Ye function ab Browser se nahi, Server ke Background se chalega
+    s = STATE["settings"]
+    # 1. AUTO OPEN - Agar koi trade nahi khula aur AUTO ON hai
+    if s["auto"] and not STATE["pos"] and len(candles)>=2:
+        last = candles[-1]
+        pct = (last["close"]-last["open"])/last["open"]*100 if last["open"] else 0
+        if pct >= s["auto_pct"]: open_pos(coin, "LONG", price_inr, auto=True)
+        elif pct <= -s["auto_pct"]: open_pos(coin, "SHORT", price_inr, auto=True)
+    # 2. TP / SL / TRAIL - Agar trade khula hai
+    if STATE["pos"]:
+        pos = STATE["pos"]
+        curr = price_inr
+        # Agar khula hua coin aur check wala coin alag hai to us coin ka price lo - yaha same coin check kar rahe hai background me
+        if pos["side"]=="LONG":
+            if curr > pos["peak"]: pos["peak"]=curr
+        else:
+            if curr < pos["trough"]: pos["trough"]=curr
+        live_pct, _ = calc_pnl(pos, curr)
+        if live_pct >= s["tp"]: close_pos("TP HIT ✅", curr)
+        elif live_pct <= -s["sl"]: close_pos("SL HIT ❌", curr)
+        elif pos["side"]=="LONG" and curr <= pos["peak"] * (1 - s["trail"]/100) and live_pct > 0: close_pos(f"TRAIL HIT 📈 High se {s['trail']}% gira", curr)
+        elif pos["side"]=="SHORT" and curr >= pos["trough"] * (1 + s["trail"]/100) and live_pct > 0: close_pos(f"TRAIL HIT 📉 Low se {s['trail']}% upar", curr)
+
+# ===== BACKGROUND BOT - Chrome band ho tab bhi chalega =====
+def background_bot():
+    print("🤖 BACKGROUND BOT START - Chrome band ho tab bhi chalega")
+    while True:
+        try:
+            s = STATE["settings"]
+            # Agar trade khula hai to usi coin ko check karo, nahi to Auto Coin (BTC) ko
+            coin_to_check = STATE["pos"]["coin"] if STATE["pos"] else s.get("auto_coin","BTC")
+            price_inr, _, candles = get_data_coin(coin_to_check, "1m")
+            if price_inr>0:
+                check_trade_logic(coin_to_check, price_inr, candles)
+        except Exception as e:
+            print("BG Error:", e)
+        time.sleep(5)
+
+# Server start hote hi Background Bot chalu
+threading.Thread(target=background_bot, daemon=True).start()
+
 HTML = """
 <style>body{font-family:Arial;text-align:center;padding:8px}button{padding:10px 14px;margin:3px;font-size:15px;border-radius:8px;border:1px solid #000}.long{background:#22c55e;color:#fff}.short{background:#ef4444;color:#fff}.close{background:#000;color:#fff}.tf{background:#eef}.tf.active{background:#000;color:#fff}.tool{background:#fff;border:2px solid #7c3aed}.tool.active{background:#7c3aed;color:#fff}.box{border:1px solid #ccc;border-radius:10px;padding:10px;margin:8px auto;max-width:860px;text-align:left}input,select{padding:8px;margin:4px;font-size:15px;width:110px}.on{color:green;font-weight:bold}.off{color:red;font-weight:bold}.live{color:#ef4444;font-weight:bold;animation:blink 1s infinite}@keyframes blink{50%{opacity:0.3}}</style>
-<h2>🚀 Future Bot - INDIA PRICE 🇮🇳 + LIVE CANDLE 🕯️</h2>
+<h2>🚀 Future Bot - INDIA PRICE 🇮🇳 + 24x7 AUTO 🤖</h2>
 <div><button onclick="load('BTC')">BTC</button><button onclick="load('ETH')">ETH</button><button onclick="load('SOL')">SOL</button><button onclick="load('DOGE')">DOGE</button><button onclick="load('XRP')">XRP</button><button onclick="load('ADA')">ADA</button><button onclick="load('BNB')">BNB</button></div>
 <h1 id="p">Loading...</h1>
-<div><span class="live">● LIVE</span> <span style="font-size:14px">Current Candle sabse aage - kabhi nahi chupegi</span></div>
+<div><span class="live">● LIVE</span> <span style="font-size:14px">Background Bot ON - Chrome band karne ke baad bhi trade hoga</span></div>
 <h2 id="bal" style="color:#0a7">💰 Wallet: ₹10,000</h2>
 <h3 id="locked" style="color:#d97706">🔒 Locked: ₹0 | Total: ₹10,000</h3>
 <h3 id="pos">No Position</h3>
@@ -99,7 +142,8 @@ TP %: <input id="tp" type="number" value="1.0" step="0.1" onchange="saveSet()"> 
 SL %: <input id="sl" type="number" value="0.5" step="0.1" onchange="saveSet()"> &nbsp;
 Trail %: <input id="trail" type="number" value="0.5" step="0.1" onchange="saveSet()"><br>
 <b>🤖 AUTO TRADE:</b> <select id="auto" onchange="saveSet()"><option value="1" selected>ON ✅</option><option value="0">OFF ❌</option></select>
-Auto %: <input id="auto_pct" type="number" value="0.5" step="0.1" min="0.1" onchange="saveSet()"> % <span style="font-size:13px">- Is % se upar/neeche gaya to AUTO khulega</span><br>
+Auto %: <input id="auto_pct" type="number" value="0.5" step="0.1" min="0.1" onchange="saveSet()"> % &nbsp;
+Auto Coin: <select id="auto_coin" onchange="saveSet()"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option><option>ADA</option><option>BNB</option></select> <span style="font-size:13px">- Chrome band ho to isi coin pe AUTO chalega</span><br>
 <span id="autoTxt" class="on">AUTO ON - 0.5% Jump/Dump pe khud khulega</span>
 </div>
 <div><button class="long" onclick="trade('LONG')">🟢 LONG Lagao</button><button class="short" onclick="trade('SHORT')">🔴 SHORT Lagao</button><button class="close" onclick="trade('CLOSE')">❌ Band Karo</button><button onclick="resetBal()">🔄 Wallet Reset ₹10,000</button></div>
@@ -116,45 +160,34 @@ let cur='BTC'; let tf='1m'; let tool='none'; let hLines=[]; let vLines=[]; let l
 function setTF(t){tf=t;document.querySelectorAll('.tf').forEach(b=>b.classList.remove('active'));document.getElementById('tf-'+t).classList.add('active');fetchData();}
 function setTool(t){tool=t;document.querySelectorAll('.tool').forEach(b=>b.classList.remove('active'));if(t!='none')document.getElementById('tool-'+t).classList.add('active');else document.getElementById('tool-none').classList.add('active');}
 function clearLines(){hLines=[];vLines=[];drawChart();}
-async function load(coin){cur=coin;fetchData();}
-async function saveSet(){let s={leverage:document.getElementById('lev').value,amount:document.getElementById('amt').value,tp:document.getElementById('tp').value,sl:document.getElementById('sl').value,trail:document.getElementById('trail').value,auto:document.getElementById('auto').value,auto_pct:document.getElementById('auto_pct').value};await fetch('/api/settings?leverage='+s.leverage+'&amount='+s.amount+'&tp='+s.tp+'&sl='+s.sl+'&trail='+s.trail+'&auto='+s.auto+'&auto_pct='+s.auto_pct);document.getElementById('autoTxt').innerText=s.auto=='1'?'AUTO ON - '+s.auto_pct+'% Jump/Dump pe khud khulega':'AUTO OFF - Sirf Manual';document.getElementById('autoTxt').className=s.auto=='1'?'on':'off';}
+async function load(coin){cur=coin;document.getElementById('auto_coin').value=coin;saveSet();fetchData();}
+async function saveSet(){let s={leverage:document.getElementById('lev').value,amount:document.getElementById('amt').value,tp:document.getElementById('tp').value,sl:document.getElementById('sl').value,trail:document.getElementById('trail').value,auto:document.getElementById('auto').value,auto_pct:document.getElementById('auto_pct').value,auto_coin:document.getElementById('auto_coin').value};await fetch('/api/settings?leverage='+s.leverage+'&amount='+s.amount+'&tp='+s.tp+'&sl='+s.sl+'&trail='+s.trail+'&auto='+s.auto+'&auto_pct='+s.auto_pct+'&auto_coin='+s.auto_coin);document.getElementById('autoTxt').innerText=s.auto=='1'?'AUTO ON - '+s.auto_pct+'% Jump/Dump pe khud khulega | Auto Coin: '+s.auto_coin:'AUTO OFF - Sirf Manual';document.getElementById('autoTxt').className=s.auto=='1'?'on':'off';}
 async function trade(side){let r=await fetch('/api/trade?coin='+cur+'&side='+side);let d=await r.json();alert(d.msg);fetchData();}
 async function resetBal(){await fetch('/api/reset');fetchData();}
 function fmtINR(n){if(n>=10000000) return '₹'+(n/10000000).toFixed(2)+' Cr'; if(n>=100000) return '₹'+(n/100000).toFixed(2)+' L'; if(n>=1000) return '₹'+(n/1000).toFixed(1)+'k'; return '₹'+n.toFixed(2);}
 function drawChart(){
 let cv=document.getElementById('c');let x=cv.getContext('2d');x.clearRect(0,0,860,340);if(!lastCandles.length)return;
-// FIX: Live price ko bhi range me lo, taaki current candle bahar na kat jaye
 let allLow=[...lastCandles.map(a=>a.low), lastPrice]; let allHigh=[...lastCandles.map(a=>a.high), lastPrice];
 let lo=Math.min(...allLow); let hi=Math.max(...allHigh);
 let rg=hi-lo||1; lo-=rg*0.08; hi+=rg*0.08; rg=hi-lo;
-let chartW=730; // pehle 760 tha, ab 730 - taaki last candle price box ke neeche na dabe
-let w=chartW/lastCandles.length;let yOf=p=>10+((hi-p)/rg)*300;let xOf=i=>i*w+w/2;
+let chartW=730; let w=chartW/lastCandles.length;let yOf=p=>10+((hi-p)/rg)*300;let xOf=i=>i*w+w/2;
 x.font='12px Arial';x.fillStyle='#666';x.strokeStyle='#eee';
 for(let i=0;i<=5;i++){let p=lo+(rg*i/5);let y=yOf(p);x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.fillText(fmtINR(p),738,y+4);}
-// STEP 1 - SABSE PEHLE Live Price Line (PICHE) - ab ye candle ko nahi dhakegi
 let yL=yOf(lastPrice);x.strokeStyle='#2563eb';x.setLineDash([4,3]);x.lineWidth=1;x.beginPath();x.moveTo(0,yL);x.lineTo(chartW,yL);x.stroke();x.setLineDash([]);x.lineWidth=1;
-// STEP 2 - H / V Lines (BEECH ME)
 hLines.forEach(p=>{let y=yOf(p);x.strokeStyle='#7c3aed';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.setLineDash([]);});
 vLines.forEach(idx=>{let px=xOf(idx);x.strokeStyle='#f59e0b';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(px,0);x.lineTo(px,310);x.stroke();x.setLineDash([]);});
-// STEP 3 - SABSE AAKHIR ME Candles (SABSE AAGE) - isliye ab candle kabhi piche nahi jayegi
 lastCandles.forEach((c,i)=>{
 let px=xOf(i);let yH=yOf(c.high);let yL2=yOf(c.low);let yO=yOf(c.open);let yC=yOf(c.close);let isLast=(i==lastCandles.length-1);let g=c.close>=c.open;
 x.strokeStyle=g?'green':'red';x.fillStyle=g?'green':'red';x.beginPath();x.moveTo(px,yH);x.lineTo(px,yL2);x.stroke();
-let bw = isLast ? 10 : 7; // Current candle thodi MOTI - aasani se dikhegi
-x.fillRect(px-bw/2,Math.min(yO,yC),bw,Math.max(3,Math.abs(yC-yO)));
-if(isLast){
-// Current candle pe MOTA KALA BORDER + LIVE likha
-x.strokeStyle='#000';x.lineWidth=2.5;x.setLineDash([]);x.strokeRect(px-bw/2-1,Math.min(yO,yC)-1,bw+2,Math.max(4,Math.abs(yC-yO))+2);x.lineWidth=1;
-x.fillStyle='#000';x.font='bold 11px Arial';x.fillText('● LIVE', px-18, Math.min(yO,yC)-6);x.font='12px Arial';
-}
+let bw = isLast ? 10 : 7; x.fillRect(px-bw/2,Math.min(yO,yC),bw,Math.max(3,Math.abs(yC-yO)));
+if(isLast){x.strokeStyle='#000';x.lineWidth=2.5;x.setLineDash([]);x.strokeRect(px-bw/2-1,Math.min(yO,yC)-1,bw+2,Math.max(4,Math.abs(yC-yO))+2);x.lineWidth=1;x.fillStyle='#000';x.font='bold 11px Arial';x.fillText('● LIVE', px-18, Math.min(yO,yC)-6);x.font='12px Arial';}
 });
-// STEP 4 - Price Labels sabse upar (sirf text, candle ke upar box nahi)
 x.fillStyle='#2563eb';x.fillRect(738,yL-10,112,20);x.fillStyle='#fff';x.fillText(fmtINR(lastPrice),742,yL+4);x.fillStyle='#666';
 hLines.forEach(p=>{let y=yOf(p);x.fillStyle='#7c3aed';x.fillRect(738,y-10,112,20);x.fillStyle='#fff';x.fillText(fmtINR(p),742,y+4);x.fillStyle='#666';});
 }
 document.getElementById('c').addEventListener('click',function(e){if(tool=='none')return;let rect=this.getBoundingClientRect();let cx=(e.clientX-rect.left)*(860/rect.width);let cy=(e.clientY-rect.top)*(340/rect.height);if(!lastCandles.length)return;let lo=Math.min(...lastCandles.map(a=>a.low));let hi=Math.max(...lastCandles.map(a=>a.high));let rg=hi-lo||1;lo-=rg*0.08;hi+=rg*0.08;rg=hi-lo;if(tool=='h'){let price=hi-((cy-10)/300)*rg;hLines.push(price);}if(tool=='v'){let idx=Math.floor(cx/(730/lastCandles.length));vLines.push(idx);}drawChart();});
 async function fetchData(){let r=await fetch('/api/data?coin='+cur+'&interval='+tf);let d=await r.json();lastCandles=d.candles;lastPrice=d.price_inr;document.getElementById('p').innerText=cur+' : ₹'+d.price_inr.toLocaleString('en-IN',{maximumFractionDigits:2})+' | '+d.position+' | 24h '+d.change+'%';document.getElementById('bal').innerText='💰 Available Wallet: ₹'+d.balance.toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('locked').innerText='🔒 Locked: ₹'+d.locked.toLocaleString('en-IN',{maximumFractionDigits:2})+' | Total: ₹'+(d.balance+d.locked).toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('pos').innerText=d.pos_msg;document.getElementById('trailInfo').innerText=d.trail_msg;let p=document.getElementById('pnl');p.innerText='Live PnL: ₹'+d.live_pnl+' ('+d.live_pct+'%)';p.style.color=d.live_pnl>=0?'green':'red';document.getElementById('h').innerHTML=d.history.map(x=>'<div>'+x+'</div>').join('');drawChart();}
-setInterval(fetchData,2000);fetchData();
+setInterval(fetchData,5000);fetchData();
 </script>
 """
 
@@ -171,6 +204,7 @@ def settings():
         STATE["settings"]["trail"] = float(request.args.get("trail",0.5))
         STATE["settings"]["auto"] = request.args.get("auto","1")=="1"
         STATE["settings"]["auto_pct"] = float(request.args.get("auto_pct",0.5))
+        STATE["settings"]["auto_coin"] = request.args.get("auto_coin","BTC")
     except: pass
     return jsonify({"ok":True})
 
@@ -199,13 +233,7 @@ def api():
     interval=request.args.get("interval","1m")
     price_inr, ch24, candles = get_data_coin(coin, interval)
     candles = [{"time":c["time"],"open":round(c["open"],2),"high":round(c["high"],2),"low":round(c["low"],2),"close":round(c["close"],2)} for c in candles]
-    s = STATE["settings"]
-    if interval=="1m" and len(candles)>=2:
-        last = candles[-1]
-        one_min_pct = (last["close"]-last["open"])/last["open"]*100 if last["open"] else 0
-        if s["auto"] and not STATE["pos"]:
-            if one_min_pct >= s["auto_pct"]: open_pos(coin, "LONG", price_inr, auto=True)
-            elif one_min_pct <= -s["auto_pct"]: open_pos(coin, "SHORT", price_inr, auto=True)
+    # Ab API sirf dikhane ke liye hai, Trade wala kaam Background Bot karega
     live_pct, live_pnl = 0, 0
     pos_msg = "No Position"
     trail_msg = "Trailing: -"
@@ -213,21 +241,11 @@ def api():
         pos = STATE["pos"]
         curr = price_inr if pos["coin"]==coin else get_data_coin(pos["coin"], interval)[0]
         if pos["side"]=="LONG":
-            if curr > pos["peak"]: pos["peak"]=curr
-            trail_msg = f"Trailing: High ₹{pos['peak']:,.2f} | High se {s['trail']}% gira ({pos['peak']*(1-s['trail']/100):,.2f}) to BAND"
+            trail_msg = f"Trailing: High ₹{pos['peak']:,.2f} | High se {STATE['settings']['trail']}% gira to BAND"
         else:
-            if curr < pos["trough"]: pos["trough"]=curr
-            trail_msg = f"Trailing: Low ₹{pos['trough']:,.2f} | Low se {s['trail']}% upar ({pos['trough']*(1+s['trail']/100):,.2f}) to BAND"
+            trail_msg = f"Trailing: Low ₹{pos['trough']:,.2f} | Low se {STATE['settings']['trail']}% upar to BAND"
         live_pct, live_pnl = calc_pnl(pos, curr)
         pos_msg = f"Open: {pos['coin']} {pos['side']} @ ₹{pos['entry_inr']:,.2f} | Amt ₹{pos['amount']} Lev {pos['lev']}x"
-        if live_pct >= s["tp"]:
-            close_pos("TP HIT ✅", curr); pos_msg="TP Hit!"; live_pct, live_pnl=0,0; trail_msg="Trailing: -"
-        elif live_pct <= -s["sl"]:
-            close_pos("SL HIT ❌", curr); pos_msg="SL Hit!"; live_pct, live_pnl=0,0; trail_msg="Trailing: -"
-        elif pos["side"]=="LONG" and curr <= pos["peak"] * (1 - s["trail"]/100) and live_pct > 0:
-            close_pos(f"TRAIL HIT 📈 High se {s['trail']}% gira", curr); pos_msg="Trail Hit! Fayda Lock"; live_pct, live_pnl=0,0; trail_msg="Trailing: -"
-        elif pos["side"]=="SHORT" and curr >= pos["trough"] * (1 + s["trail"]/100) and live_pct > 0:
-            close_pos(f"TRAIL HIT 📉 Low se {s['trail']}% upar", curr); pos_msg="Trail Hit! Fayda Lock"; live_pct, live_pnl=0,0; trail_msg="Trailing: -"
     pos_sig = "LONG 🟢" if ch24>=0 else "SHORT 🔴"
     return jsonify({"price_inr":round(price_inr,2),"change":round(ch24,2),"position":pos_sig,"candles":candles,"history":STATE["history"],"balance":round(STATE["balance_inr"],2),"locked":round(STATE["locked_inr"],2),"pos_msg":pos_msg,"trail_msg":trail_msg,"live_pnl":live_pnl,"live_pct":live_pct})
 
