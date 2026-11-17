@@ -145,3 +145,133 @@ Auto Coin: <select id="auto_coin" onchange="saveSet()"><option>BTC</option><opti
 <span id="autoTxt" class="on">AUTO ON - 0.5% Jump/Dump pe khud khulega</span>
 <div id="tpPreview"></div>
 </div>
+<div><button class="long" onclick="trade('LONG')">🟢 LONG Lagao</button><button class="short" onclick="trade('SHORT')">🔴 SHORT Lagao</button><button class="close" onclick="trade('CLOSE')">❌ Band Karo</button><button onclick="resetBal()">🔄 Wallet Reset ₹10,000</button></div>
+<div style="margin-top:12px"><b>⏱️ TIME FRAME:</b>
+<button class="tf active" id="tf-1m" onclick="setTF('1m')">1m</button><button class="tf" id="tf-5m" onclick="setTF('5m')">5m</button><button class="tf" id="tf-15m" onclick="setTF('15m')">15m</button><button class="tf" id="tf-1h" onclick="setTF('1h')">1h</button><button class="tf" id="tf-4h" onclick="setTF('4h')">4h</button><button class="tf" id="tf-1d" onclick="setTF('1d')">1D</button>
+</div>
+<div style="margin-top:8px"><b>📐 LINE TOOL:</b>
+<button class="tool active" id="tool-none" onclick="setTool('none')">🖱️ Normal</button><button class="tool" id="tool-h" onclick="setTool('h')">➖ H-Line (Price)</button><button class="tool" id="tool-v" onclick="setTool('v')">➡️ V-Line (Time)</button><button class="tool" onclick="clearLines()">🗑️ Lines Clear</button><br><span style="font-size:13px">H-Line ya V-Line select karke Chart pe click karo — line lag jayegi.</span>
+</div>
+<canvas id="c" width="860" height="340" style="border:1px solid #000;width:100%;max-width:860px;margin-top:10px;cursor:crosshair"></canvas>
+<h3>📜 History</h3><div id="h"></div>
+<script>
+let cur='BTC'; let tf='1m'; let tool='none'; let hLines=[]; let vLines=[]; let lastCandles=[]; let lastPrice=0; let curPos=null; let curEntry=0;
+function setTF(t){tf=t;document.querySelectorAll('.tf').forEach(b=>b.classList.remove('active'));document.getElementById('tf-'+t).classList.add('active');fetchData();}
+function setTool(t){tool=t;document.querySelectorAll('.tool').forEach(b=>b.classList.remove('active'));if(t!='none')document.getElementById('tool-'+t).classList.add('active');else document.getElementById('tool-none').classList.add('active');}
+function clearLines(){hLines=[];vLines=[];drawChart();}
+async function load(coin){cur=coin;document.getElementById('auto_coin').value=coin;saveSet();fetchData();}
+async function saveSet(){let s={leverage:document.getElementById('lev').value,amount:document.getElementById('amt').value,tp:document.getElementById('tp').value,sl:document.getElementById('sl').value,trail:document.getElementById('trail').value,auto:document.getElementById('auto').value,auto_pct:document.getElementById('auto_pct').value,auto_coin:document.getElementById('auto_coin').value};await fetch('/api/settings?leverage='+s.leverage+'&amount='+s.amount+'&tp='+s.tp+'&sl='+s.sl+'&trail='+s.trail+'&auto='+s.auto+'&auto_pct='+s.auto_pct+'&auto_coin='+s.auto_coin);document.getElementById('autoTxt').innerText=s.auto=='1'?'AUTO ON - '+s.auto_pct+'% Jump/Dump pe khud khulega | Auto Coin: '+s.auto_coin:'AUTO OFF - Sirf Manual';document.getElementById('autoTxt').className=s.auto=='1'?'on':'off';updateTpSlPreview();}
+async function trade(side){let r=await fetch('/api/trade?coin='+cur+'&side='+side);let d=await r.json();alert(d.msg);fetchData();}
+async function resetBal(){await fetch('/api/reset');fetchData();}
+function fmtINR(n){return '₹'+Number(n).toLocaleString('en-IN',{minimumFractionDigits:2, maximumFractionDigits:2});}
+function fmtPrice(n){return Number(n).toLocaleString('en-IN',{minimumFractionDigits:2, maximumFractionDigits:2});}
+function updateTpSlPreview(){
+let tp=parseFloat(document.getElementById('tp').value)||0;
+let sl=parseFloat(document.getElementById('sl').value)||0;
+let lev=parseFloat(document.getElementById('lev').value)||10;
+let amt=parseFloat(document.getElementById('amt').value)||1000;
+let tpProfit = amt * lev * tp / 100;
+let slLoss = amt * lev * sl / 100;
+let basePrice = (curPos && curEntry>0) ? curEntry : lastPrice;
+let side = (curPos && curPos.side) ? curPos.side : 'LONG';
+let tpPrice, slPrice;
+if(side=='LONG'){ tpPrice = basePrice * (1 + tp/100); slPrice = basePrice * (1 - sl/100); }
+else { tpPrice = basePrice * (1 - tp/100); slPrice = basePrice * (1 + sl/100); }
+let baseLabel = (curPos && curEntry>0) ? ('Entry ₹'+fmtPrice(basePrice)+' ('+side+') se') : ('Live ₹'+fmtPrice(basePrice)+' pe '+side+' lagao to');
+let html = '<div class="tpbox"><b>🎯 TP Preview - '+baseLabel+'</b><br>✅ TP '+tp+'% → Price <b>₹'+fmtPrice(tpPrice)+'</b> | Profit <b style="color:green">+₹'+tpProfit.toFixed(2)+'</b> <span style="font-size:13px">(Tere ₹'+amt+' pe '+(lev*tp).toFixed(1)+'% )</span></div>';
+html += '<div class="slbox"><b>🛑 SL Preview - '+baseLabel+'</b><br>❌ SL '+sl+'% → Price <b>₹'+fmtPrice(slPrice)+'</b> | Loss <b style="color:red">-₹'+slLoss.toFixed(2)+'</b> <span style="font-size:13px">(Tere ₹'+amt+' pe '+(lev*sl).toFixed(1)+'% )</span></div>';
+document.getElementById('tpPreview').innerHTML = html;
+}
+function drawChart(){
+let cv=document.getElementById('c');let x=cv.getContext('2d');x.clearRect(0,0,860,340);if(!lastCandles.length)return;
+let allLow=[...lastCandles.map(a=>a.low), lastPrice]; let allHigh=[...lastCandles.map(a=>a.high), lastPrice];
+let lo=Math.min(...allLow); let hi=Math.max(...allHigh);
+let rg=hi-lo||1; lo-=rg*0.08; hi+=rg*0.08; rg=hi-lo;
+let chartW=700; let w=chartW/lastCandles.length;let yOf=p=>10+((hi-p)/rg)*300;let xOf=i=>i*w+w/2;
+x.font='12px Arial';x.fillStyle='#666';x.strokeStyle='#eee';
+for(let i=0;i<=5;i++){let p=lo+(rg*i/5);let y=yOf(p);x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.fillText(fmtINR(p),708,y+4);}
+let yL=yOf(lastPrice);x.strokeStyle='#2563eb';x.setLineDash([4,3]);x.lineWidth=1;x.beginPath();x.moveTo(0,yL);x.lineTo(chartW,yL);x.stroke();x.setLineDash([]);x.lineWidth=1;
+hLines.forEach(p=>{let y=yOf(p);x.strokeStyle='#7c3aed';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.setLineDash([]);});
+vLines.forEach(idx=>{let px=xOf(idx);x.strokeStyle='#f59e0b';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(px,0);x.lineTo(px,310);x.stroke();x.setLineDash([]);});
+lastCandles.forEach((c,i)=>{
+let px=xOf(i);let yH=yOf(c.high);let yL2=yOf(c.low);let yO=yOf(c.open);let yC=yOf(c.close);let isLast=(i==lastCandles.length-1);let g=c.close>=c.open;
+x.strokeStyle=g?'green':'red';x.fillStyle=g?'green':'red';x.beginPath();x.moveTo(px,yH);x.lineTo(px,yL2);x.stroke();
+let bw = isLast ? 10 : 7; x.fillRect(px-bw/2,Math.min(yO,yC),bw,Math.max(3,Math.abs(yC-yO)));
+if(isLast){x.strokeStyle='#000';x.lineWidth=2.5;x.setLineDash([]);x.strokeRect(px-bw/2-1,Math.min(yO,yC)-1,bw+2,Math.max(4,Math.abs(yC-yO))+2);x.lineWidth=1;x.fillStyle='#000';x.font='bold 11px Arial';x.fillText('● LIVE', px-18, Math.min(yO,yC)-6);x.font='12px Arial';}
+});
+x.fillStyle='#2563eb';x.fillRect(708,yL-10,142,20);x.fillStyle='#fff';x.fillText(fmtINR(lastPrice),712,yL+4);x.fillStyle='#666';
+hLines.forEach(p=>{let y=yOf(p);x.fillStyle='#7c3aed';x.fillRect(708,y-10,142,20);x.fillStyle='#fff';x.fillText(fmtINR(p),712,y+4);x.fillStyle='#666';});
+}
+document.getElementById('c').addEventListener('click',function(e){if(tool=='none')return;let rect=this.getBoundingClientRect();let cx=(e.clientX-rect.left)*(860/rect.width);let cy=(e.clientY-rect.top)*(340/rect.height);if(!lastCandles.length)return;let lo=Math.min(...lastCandles.map(a=>a.low));let hi=Math.max(...lastCandles.map(a=>a.high));let rg=hi-lo||1;lo-=rg*0.08;hi+=rg*0.08;rg=hi-lo;if(tool=='h'){let price=hi-((cy-10)/300)*rg;hLines.push(price);}if(tool=='v'){let idx=Math.floor(cx/(700/lastCandles.length));vLines.push(idx);}drawChart();});
+async function fetchData(){let r=await fetch('/api/data?coin='+cur+'&interval='+tf);let d=await r.json();lastCandles=d.candles;lastPrice=d.price_inr;curPos=d.pos_obj;curEntry=d.entry_inr;document.getElementById('p').innerText=cur+' : ₹'+d.price_inr.toLocaleString('en-IN',{maximumFractionDigits:2})+' | '+d.position+' | 24h '+d.change+'%';document.getElementById('bal').innerText='💰 Available Wallet: ₹'+d.balance.toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('locked').innerText='🔒 Locked: ₹'+d.locked.toLocaleString('en-IN',{maximumFractionDigits:2})+' | Total: ₹'+(d.balance+d.locked).toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('pos').innerText=d.pos_msg;document.getElementById('trailInfo').innerText=d.trail_msg;let p=document.getElementById('pnl');p.innerText='Live PnL: ₹'+d.live_pnl+' ('+d.live_pct+'%)';p.style.color=d.live_pnl>=0?'green':'red';document.getElementById('h').innerHTML=d.history.map(x=>'<div>'+x+'</div>').join('');drawChart();updateTpSlPreview();}
+setInterval(fetchData,5000);fetchData();
+</script>
+"""
+
+@app.route("/")
+def home(): return render_template_string(HTML)
+
+@app.route("/api/settings")
+def settings():
+    try:
+        STATE["settings"]["leverage"] = int(request.args.get("leverage",10))
+        STATE["settings"]["amount"] = float(request.args.get("amount",1000))
+        STATE["settings"]["tp"] = float(request.args.get("tp",1.0))
+        STATE["settings"]["sl"] = float(request.args.get("sl",0.5))
+        STATE["settings"]["trail"] = float(request.args.get("trail",0.5))
+        STATE["settings"]["auto"] = request.args.get("auto","1")=="1"
+        STATE["settings"]["auto_pct"] = float(request.args.get("auto_pct",0.5))
+        STATE["settings"]["auto_coin"] = request.args.get("auto_coin","BTC")
+    except: pass
+    return jsonify({"ok":True})
+
+@app.route("/api/reset")
+def reset():
+    STATE["balance_inr"]=10000.0; STATE["locked_inr"]=0.0; STATE["pos"]=None; STATE["history"]=[]
+    return jsonify({"ok":True})
+
+@app.route("/api/trade")
+def trade():
+    coin=request.args.get("coin","BTC"); side=request.args.get("side","LONG")
+    interval=request.args.get("interval","1m")
+    price_inr,_ = get_live_price(coin)
+    if price_inr==0: price_inr,_,_=get_data_coin(coin, interval)
+    if side=="CLOSE":
+        if not STATE["pos"]: return jsonify({"msg":"Koi trade khula nahi hai"})
+        close_pos("MANUAL BAND", price_inr)
+        return jsonify({"msg":f"Trade band! Wallet ab ₹{STATE['balance_inr']:.2f}"})
+    if STATE["pos"]: return jsonify({"msg":f"Pehle {STATE['pos']['coin']} {STATE['pos']['side']} band karo"})
+    if open_pos(coin, side, price_inr, auto=False):
+        return jsonify({"msg":f"{coin} {side} lag gaya @ ₹{price_inr:,.2f}"})
+    return jsonify({"msg":"Wallet me paisa kam hai!"})
+
+@app.route("/api/data")
+def api():
+    coin=request.args.get("coin","BTC")
+    interval=request.args.get("interval","1m")
+    price_inr, ch24, candles = get_data_coin(coin, interval)
+    live_p, live_ch = get_live_price(coin)
+    if live_p>0: price_inr = live_p; ch24 = live_ch
+    candles = [{"time":c["time"],"open":round(c["open"],2),"high":round(c["high"],2),"low":round(c["low"],2),"close":round(c["close"],2)} for c in candles]
+    live_pct, live_pnl = 0, 0
+    pos_msg = "No Position"
+    trail_msg = "Trailing: -"
+    pos_obj = None
+    entry_inr = 0
+    if STATE["pos"]:
+        pos = STATE["pos"]
+        curr_p, _ = get_live_price(pos["coin"])
+        curr = curr_p if curr_p>0 else price_inr
+        if pos["side"]=="LONG":
+            trail_msg = f"Trailing: High ₹{pos['peak']:,.2f} | High se {STATE['settings']['trail']}% gira to BAND"
+        else:
+            trail_msg = f"Trailing: Low ₹{pos['trough']:,.2f} | Low se {STATE['settings']['trail']}% upar to BAND"
+        live_pct, live_pnl = calc_pnl(pos, curr)
+        pos_msg = f"Open: {pos['coin']} {pos['side']} @ ₹{pos['entry_inr']:,.2f} | Amt ₹{pos['amount']} Lev {pos['lev']}x"
+        pos_obj = {"side": pos["side"], "coin": pos["coin"]}
+        entry_inr = pos["entry_inr"]
+    pos_sig = "LONG 🟢" if ch24>=0 else "SHORT 🔴"
+    return jsonify({"price_inr":round(price_inr,2),"change":round(ch24,2),"position":pos_sig,"candles":candles,"history":STATE["history"],"balance":round(STATE["balance_inr"],2),"locked":round(STATE["locked_inr"],2),"pos_msg":pos_msg,"trail_msg":trail_msg,"live_pnl":live_pnl,"live_pct":live_pct,"pos_obj":pos_obj,"entry_inr":entry_inr})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
