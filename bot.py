@@ -13,30 +13,32 @@ STATE = {
 }
 
 def get_data_coin(coin, interval="1m"):
-    # interval mapping CoinDCX: 1m, 5m, 15m, 1h, 4h, 1d
     pair = f"I-{coin}_INR"
+    price_inr = 0; ch24 = 0; candles_inr = []
     try:
-        r = requests.get(f"https://public.coindcx.com/market_data/candles?pair={pair}&interval={interval}&limit=50", timeout=10, headers={"User-Agent":"Mozilla/5.0"}).json()
-        raw = r.get("data", r) if isinstance(r, dict) else r
-        candles_inr = []
-        for k in raw:
-            if isinstance(k, dict):
-                candles_inr.append({"time": int(k.get("time",0)), "open": float(k.get("open",0)), "high": float(k.get("high",0)), "low": float(k.get("low",0)), "close": float(k.get("close",0))})
-            else:
-                ts = int(k[0])
-                ts = int(ts/1000) if ts>10000000000 else ts
-                candles_inr.append({"time": ts, "open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4])})
-        if not candles_inr: raise Exception("no candles")
-        price_inr = candles_inr[-1]["close"]
-        ch24 = 0
         try:
             t = requests.get("https://api.coindcx.com/exchange/ticker", timeout=8, headers={"User-Agent":"Mozilla/5.0"}).json()
             for m in t:
                 if m.get("market") == f"{coin}INR":
                     ch24 = float(m.get("change_24_hour", 0))
-                    price_inr = float(m.get("last_price", price_inr))
+                    price_inr = float(m.get("last_price", 0))
                     break
         except: pass
+        r = requests.get(f"https://public.coindcx.com/market_data/candles?pair={pair}&interval={interval}&limit=50", timeout=10, headers={"User-Agent":"Mozilla/5.0"}).json()
+        raw = r.get("data", r) if isinstance(r, dict) else r
+        for k in raw:
+            if isinstance(k, dict):
+                candles_inr.append({"time": int(k.get("time",0)), "open": float(k.get("open",0)), "high": float(k.get("high",0)), "low": float(k.get("low",0)), "close": float(k.get("close",0))})
+            else:
+                ts = int(k[0]); ts = int(ts/1000) if ts>10000000000 else ts
+                candles_inr.append({"time": ts, "open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4])})
+        candles_inr = sorted(candles_inr, key=lambda x: x["time"])
+        if not candles_inr: raise Exception("no candles")
+        if price_inr == 0: price_inr = candles_inr[-1]["close"]
+        last = candles_inr[-1]
+        last["close"] = price_inr
+        if price_inr > last["high"]: last["high"] = price_inr
+        if price_inr < last["low"]: last["low"] = price_inr
         return price_inr, ch24, candles_inr
     except:
         try:
@@ -46,6 +48,10 @@ def get_data_coin(coin, interval="1m"):
             bi = {"1m":"1m","5m":"5m","15m":"15m","1h":"1h","4h":"4h","1d":"1d"}.get(interval,"1m")
             r2 = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={sym}&interval={bi}&limit=50", timeout=10).json()
             candles = [{"time":int(int(k[0])/1000),"open":float(k[1])*88,"high":float(k[2])*88,"low":float(k[3])*88,"close":float(k[4])*88} for k in r2]
+            if candles:
+                candles[-1]["close"] = price_usd*88
+                if price_usd*88 > candles[-1]["high"]: candles[-1]["high"] = price_usd*88
+                if price_usd*88 < candles[-1]["low"]: candles[-1]["low"] = price_usd*88
             return price_usd*88, ch24, candles
         except: return 0, 0, []
 
@@ -76,10 +82,11 @@ def open_pos(coin, side, entry_inr, auto=False):
     return True
 
 HTML = """
-<style>body{font-family:Arial;text-align:center;padding:8px}button{padding:10px 14px;margin:3px;font-size:15px;border-radius:8px;border:1px solid #000}.long{background:#22c55e;color:#fff}.short{background:#ef4444;color:#fff}.close{background:#000;color:#fff}.tf{background:#eef}.tf.active{background:#000;color:#fff}.tool{background:#fff;border:2px solid #7c3aed}.tool.active{background:#7c3aed;color:#fff}.box{border:1px solid #ccc;border-radius:10px;padding:10px;margin:8px auto;max-width:860px;text-align:left}input,select{padding:8px;margin:4px;font-size:15px;width:110px}.on{color:green;font-weight:bold}.off{color:red;font-weight:bold}</style>
-<h2>🚀 Future Bot - INDIA PRICE 🇮🇳 + PRO CHART</h2>
+<style>body{font-family:Arial;text-align:center;padding:8px}button{padding:10px 14px;margin:3px;font-size:15px;border-radius:8px;border:1px solid #000}.long{background:#22c55e;color:#fff}.short{background:#ef4444;color:#fff}.close{background:#000;color:#fff}.tf{background:#eef}.tf.active{background:#000;color:#fff}.tool{background:#fff;border:2px solid #7c3aed}.tool.active{background:#7c3aed;color:#fff}.box{border:1px solid #ccc;border-radius:10px;padding:10px;margin:8px auto;max-width:860px;text-align:left}input,select{padding:8px;margin:4px;font-size:15px;width:110px}.on{color:green;font-weight:bold}.off{color:red;font-weight:bold}.live{color:#ef4444;font-weight:bold;animation:blink 1s infinite}@keyframes blink{50%{opacity:0.3}}</style>
+<h2>🚀 Future Bot - INDIA PRICE 🇮🇳 + LIVE CANDLE 🕯️</h2>
 <div><button onclick="load('BTC')">BTC</button><button onclick="load('ETH')">ETH</button><button onclick="load('SOL')">SOL</button><button onclick="load('DOGE')">DOGE</button><button onclick="load('XRP')">XRP</button><button onclick="load('ADA')">ADA</button><button onclick="load('BNB')">BNB</button></div>
 <h1 id="p">Loading...</h1>
+<div><span class="live">● LIVE</span> <span style="font-size:14px">Current Candle sabse aage - kabhi nahi chupegi</span></div>
 <h2 id="bal" style="color:#0a7">💰 Wallet: ₹10,000</h2>
 <h3 id="locked" style="color:#d97706">🔒 Locked: ₹0 | Total: ₹10,000</h3>
 <h3 id="pos">No Position</h3>
@@ -100,7 +107,7 @@ Auto %: <input id="auto_pct" type="number" value="0.5" step="0.1" min="0.1" onch
 <button class="tf active" id="tf-1m" onclick="setTF('1m')">1m</button><button class="tf" id="tf-5m" onclick="setTF('5m')">5m</button><button class="tf" id="tf-15m" onclick="setTF('15m')">15m</button><button class="tf" id="tf-1h" onclick="setTF('1h')">1h</button><button class="tf" id="tf-4h" onclick="setTF('4h')">4h</button><button class="tf" id="tf-1d" onclick="setTF('1d')">1D</button>
 </div>
 <div style="margin-top:8px"><b>📐 LINE TOOL:</b>
-<button class="tool active" id="tool-none" onclick="setTool('none')">🖱️ Normal</button><button class="tool" id="tool-h" onclick="setTool('h')">➖ H-Line (Price)</button><button class="tool" id="tool-v" onclick="setTool('v')">➡️ V-Line (Time)</button><button class="tool" onclick="clearLines()">🗑️ Lines Clear</button><br><span style="font-size:13px">H-Line ya V-Line select karke Chart pe click karo — line lag jayegi. H-Line = Us Price pe, V-Line = Us Time pe.</span>
+<button class="tool active" id="tool-none" onclick="setTool('none')">🖱️ Normal</button><button class="tool" id="tool-h" onclick="setTool('h')">➖ H-Line (Price)</button><button class="tool" id="tool-v" onclick="setTool('v')">➡️ V-Line (Time)</button><button class="tool" onclick="clearLines()">🗑️ Lines Clear</button><br><span style="font-size:13px">H-Line ya V-Line select karke Chart pe click karo — line lag jayegi.</span>
 </div>
 <canvas id="c" width="860" height="340" style="border:1px solid #000;width:100%;max-width:860px;margin-top:10px;cursor:crosshair"></canvas>
 <h3>📜 History</h3><div id="h"></div>
@@ -114,22 +121,40 @@ async function saveSet(){let s={leverage:document.getElementById('lev').value,am
 async function trade(side){let r=await fetch('/api/trade?coin='+cur+'&side='+side);let d=await r.json();alert(d.msg);fetchData();}
 async function resetBal(){await fetch('/api/reset');fetchData();}
 function fmtINR(n){if(n>=10000000) return '₹'+(n/10000000).toFixed(2)+' Cr'; if(n>=100000) return '₹'+(n/100000).toFixed(2)+' L'; if(n>=1000) return '₹'+(n/1000).toFixed(1)+'k'; return '₹'+n.toFixed(2);}
-function drawChart(){let cv=document.getElementById('c');let x=cv.getContext('2d');x.clearRect(0,0,860,340);if(!lastCandles.length)return;let lo=Math.min(...lastCandles.map(a=>a.low));let hi=Math.max(...lastCandles.map(a=>a.high));let pad=6;let rg=hi-lo||1;lo-=rg*0.05;hi+=rg*0.05;rg=hi-lo;let chartW=760;let w=chartW/lastCandles.length;let yOf=p=>10+((hi-p)/rg)*300;let xOf=i=>i*w+w/2;
-// Grid + Price Labels INR me (Right side)
+function drawChart(){
+let cv=document.getElementById('c');let x=cv.getContext('2d');x.clearRect(0,0,860,340);if(!lastCandles.length)return;
+// FIX: Live price ko bhi range me lo, taaki current candle bahar na kat jaye
+let allLow=[...lastCandles.map(a=>a.low), lastPrice]; let allHigh=[...lastCandles.map(a=>a.high), lastPrice];
+let lo=Math.min(...allLow); let hi=Math.max(...allHigh);
+let rg=hi-lo||1; lo-=rg*0.08; hi+=rg*0.08; rg=hi-lo;
+let chartW=730; // pehle 760 tha, ab 730 - taaki last candle price box ke neeche na dabe
+let w=chartW/lastCandles.length;let yOf=p=>10+((hi-p)/rg)*300;let xOf=i=>i*w+w/2;
 x.font='12px Arial';x.fillStyle='#666';x.strokeStyle='#eee';
-for(let i=0;i<=5;i++){let p=lo+(rg*i/5);let y=yOf(p);x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.fillText(fmtINR(p),768,y+4);}
-// Candles
-lastCandles.forEach((c,i)=>{let px=xOf(i);let yH=yOf(c.high);let yL=yOf(c.low);let yO=yOf(c.open);let yC=yOf(c.close);let g=c.close>=c.open;x.strokeStyle=g?'green':'red';x.fillStyle=g?'green':'red';x.beginPath();x.moveTo(px,yH);x.lineTo(px,yL);x.stroke();x.fillRect(px-6,Math.min(yO,yC),12,Math.max(3,Math.abs(yC-yO)));});
-// H Lines - Price wali
-hLines.forEach(p=>{let y=yOf(p);x.strokeStyle='#7c3aed';x.setLineDash([6,4]);x.lineWidth=2;x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.setLineDash([]);x.lineWidth=1;x.fillStyle='#7c3aed';x.fillRect(chartW-5,y-10,90,20);x.fillStyle='#fff';x.fillText(fmtINR(p),chartW+2,y+4);x.fillStyle='#666';});
-// V Lines - Time wali
-vLines.forEach(idx=>{let px=xOf(idx);x.strokeStyle='#f59e0b';x.setLineDash([6,4]);x.lineWidth=2;x.beginPath();x.moveTo(px,0);x.lineTo(px,310);x.stroke();x.setLineDash([]);x.lineWidth=1;});
-// Live Price Line
-let yL=yOf(lastPrice);x.strokeStyle='#2563eb';x.setLineDash([4,3]);x.lineWidth=2;x.beginPath();x.moveTo(0,yL);x.lineTo(chartW,yL);x.stroke();x.setLineDash([]);x.lineWidth=1;x.fillStyle='#2563eb';x.fillRect(chartW-5,yL-10,90,20);x.fillStyle='#fff';x.fillText(fmtINR(lastPrice),chartW+2,yL+4);
+for(let i=0;i<=5;i++){let p=lo+(rg*i/5);let y=yOf(p);x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.fillText(fmtINR(p),738,y+4);}
+// STEP 1 - SABSE PEHLE Live Price Line (PICHE) - ab ye candle ko nahi dhakegi
+let yL=yOf(lastPrice);x.strokeStyle='#2563eb';x.setLineDash([4,3]);x.lineWidth=1;x.beginPath();x.moveTo(0,yL);x.lineTo(chartW,yL);x.stroke();x.setLineDash([]);x.lineWidth=1;
+// STEP 2 - H / V Lines (BEECH ME)
+hLines.forEach(p=>{let y=yOf(p);x.strokeStyle='#7c3aed';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(0,y);x.lineTo(chartW,y);x.stroke();x.setLineDash([]);});
+vLines.forEach(idx=>{let px=xOf(idx);x.strokeStyle='#f59e0b';x.setLineDash([6,4]);x.lineWidth=1;x.beginPath();x.moveTo(px,0);x.lineTo(px,310);x.stroke();x.setLineDash([]);});
+// STEP 3 - SABSE AAKHIR ME Candles (SABSE AAGE) - isliye ab candle kabhi piche nahi jayegi
+lastCandles.forEach((c,i)=>{
+let px=xOf(i);let yH=yOf(c.high);let yL2=yOf(c.low);let yO=yOf(c.open);let yC=yOf(c.close);let isLast=(i==lastCandles.length-1);let g=c.close>=c.open;
+x.strokeStyle=g?'green':'red';x.fillStyle=g?'green':'red';x.beginPath();x.moveTo(px,yH);x.lineTo(px,yL2);x.stroke();
+let bw = isLast ? 10 : 7; // Current candle thodi MOTI - aasani se dikhegi
+x.fillRect(px-bw/2,Math.min(yO,yC),bw,Math.max(3,Math.abs(yC-yO)));
+if(isLast){
+// Current candle pe MOTA KALA BORDER + LIVE likha
+x.strokeStyle='#000';x.lineWidth=2.5;x.setLineDash([]);x.strokeRect(px-bw/2-1,Math.min(yO,yC)-1,bw+2,Math.max(4,Math.abs(yC-yO))+2);x.lineWidth=1;
+x.fillStyle='#000';x.font='bold 11px Arial';x.fillText('● LIVE', px-18, Math.min(yO,yC)-6);x.font='12px Arial';
 }
-document.getElementById('c').addEventListener('click',function(e){if(tool=='none')return;let rect=this.getBoundingClientRect();let cx=(e.clientX-rect.left)*(860/rect.width);let cy=(e.clientY-rect.top)*(340/rect.height);if(!lastCandles.length)return;let lo=Math.min(...lastCandles.map(a=>a.low));let hi=Math.max(...lastCandles.map(a=>a.high));let rg=hi-lo||1;lo-=rg*0.05;hi+=rg*0.05;rg=hi-lo;if(tool=='h'){let price=hi-((cy-10)/300)*rg;hLines.push(price);}if(tool=='v'){let idx=Math.floor(cx/(760/lastCandles.length));vLines.push(idx);}drawChart();});
+});
+// STEP 4 - Price Labels sabse upar (sirf text, candle ke upar box nahi)
+x.fillStyle='#2563eb';x.fillRect(738,yL-10,112,20);x.fillStyle='#fff';x.fillText(fmtINR(lastPrice),742,yL+4);x.fillStyle='#666';
+hLines.forEach(p=>{let y=yOf(p);x.fillStyle='#7c3aed';x.fillRect(738,y-10,112,20);x.fillStyle='#fff';x.fillText(fmtINR(p),742,y+4);x.fillStyle='#666';});
+}
+document.getElementById('c').addEventListener('click',function(e){if(tool=='none')return;let rect=this.getBoundingClientRect();let cx=(e.clientX-rect.left)*(860/rect.width);let cy=(e.clientY-rect.top)*(340/rect.height);if(!lastCandles.length)return;let lo=Math.min(...lastCandles.map(a=>a.low));let hi=Math.max(...lastCandles.map(a=>a.high));let rg=hi-lo||1;lo-=rg*0.08;hi+=rg*0.08;rg=hi-lo;if(tool=='h'){let price=hi-((cy-10)/300)*rg;hLines.push(price);}if(tool=='v'){let idx=Math.floor(cx/(730/lastCandles.length));vLines.push(idx);}drawChart();});
 async function fetchData(){let r=await fetch('/api/data?coin='+cur+'&interval='+tf);let d=await r.json();lastCandles=d.candles;lastPrice=d.price_inr;document.getElementById('p').innerText=cur+' : ₹'+d.price_inr.toLocaleString('en-IN',{maximumFractionDigits:2})+' | '+d.position+' | 24h '+d.change+'%';document.getElementById('bal').innerText='💰 Available Wallet: ₹'+d.balance.toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('locked').innerText='🔒 Locked: ₹'+d.locked.toLocaleString('en-IN',{maximumFractionDigits:2})+' | Total: ₹'+(d.balance+d.locked).toLocaleString('en-IN',{maximumFractionDigits:2});document.getElementById('pos').innerText=d.pos_msg;document.getElementById('trailInfo').innerText=d.trail_msg;let p=document.getElementById('pnl');p.innerText='Live PnL: ₹'+d.live_pnl+' ('+d.live_pct+'%)';p.style.color=d.live_pnl>=0?'green':'red';document.getElementById('h').innerHTML=d.history.map(x=>'<div>'+x+'</div>').join('');drawChart();}
-setInterval(fetchData,5000);fetchData();
+setInterval(fetchData,2000);fetchData();
 </script>
 """
 
@@ -175,7 +200,6 @@ def api():
     price_inr, ch24, candles = get_data_coin(coin, interval)
     candles = [{"time":c["time"],"open":round(c["open"],2),"high":round(c["high"],2),"low":round(c["low"],2),"close":round(c["close"],2)} for c in candles]
     s = STATE["settings"]
-    # AUTO - Ab adjustable % se, hamesha 1m wali candle se check (TimeFrame se alag)
     if interval=="1m" and len(candles)>=2:
         last = candles[-1]
         one_min_pct = (last["close"]-last["open"])/last["open"]*100 if last["open"] else 0
