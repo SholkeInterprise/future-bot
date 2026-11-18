@@ -177,3 +177,129 @@ def auto_loop():
             time.sleep(5)
 
 threading.Thread(target=auto_loop, daemon=True).start()
+
+@app.route("/")
+def home():
+    price = get_btc_price()
+    sig, rsi, ema9, ema21 = decide_signal()
+    t = state["open_trade"]
+    live_pnl = 0
+    live_pct = 0
+    if t:
+        if t["side"] == "LONG":
+            live_pct = (price - t["entry"])/t["entry"]*100*t["leverage"]
+        else:
+            live_pct = (t["entry"] - price)/t["entry"]*100*t["leverage"]
+        live_pnl = t["amount"] * live_pct/100
+    win_rate = 0
+    if state["total_trades"] > 0:
+        win_rate = round(state["win"]/state["total_trades"]*100, 1)
+    hist_html = ""
+    for h in state["history"][:30]:
+        col = "green" if h["pnl"] >= 0 else "red"
+        hist_html += f'<div style="display:flex;justify-content:space-between;padding:7px;border-bottom:1px solid #eee;font-size:13px;"><span><b>{h["side"]}</b> {h["pair"]} {h["time"]} | {h["leverage"]}x</span><span style="color:{col};font-weight:bold;">{h["pnl"]} ({h["reason"]})</span></div>'
+    if not hist_html:
+        hist_html = "<p style='text-align:center;color:#888;'>Abhi koi trade nahi hua</p>"
+    chart_data = ",".join([str(int(p)) for p in list(price_history)[-40:]])
+    open_html = "<p style='text-align:center;color:#888;'>No Open Trade - AUTO ON karo</p>"
+    if t:
+        open_html = f'<div style="background:#fff3cd;padding:10px;border-radius:8px;"><b>{t["side"]} {t["coin"]}</b> | Entry {t["entry"]:.2f} | Amt {t["amount"]} | Lev {t["leverage"]}x<br>Live PnL: <b>{live_pnl:.2f}</b> ({live_pct:.2f}%) | Time {t["time"]}</div>'
+    return f"""
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Future Bot Pro</title></head>
+    <body style="font-family:Arial;padding:12px;background:#f0f2f5;margin:0;">
+    <h2 style="margin:5px 0;">Future Bot PRO - {state["mode"]} MODE</h2>
+    <p style="margin:2px 0;">BTC Price: <b style="font-size:20px;">{price:.2f}</b> | Signal: <b style="color:{'green' if sig=='LONG' else 'red' if sig=='SHORT' else 'gray'};">{sig}</b> | RSI: {rsi:.1f} | EMA9: {ema9:.0f} EMA21: {ema21:.0f}</p>
+    <div style="background:white;padding:12px;border-radius:10px;">
+    <p style="margin:3px 0;">Available: <b>{state["balance"]:.2f}</b> | Locked: {state["locked"]:.2f} | Total Profit: <b>{state["total_profit"]:.2f}</b></p>
+    <p style="margin:3px 0;">Trades: {state["total_trades"]} | Win: {state["win"]} Loss: {state["loss"]} WinRate: {win_rate}% | Auto: <b>{'ON' if state["auto"] else 'OFF'}</b></p>
+    </div>
+    <div style="background:white;padding:12px;border-radius:10px;margin-top:10px;">
+    <h3 style="margin:0 0 8px 0;">Live Chart</h3>
+    <canvas id="chart" width="340" height="120" style="width:100%;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;"></canvas>
+    </div>
+    <div style="background:white;padding:12px;border-radius:10px;margin-top:10px;">
+    <h3 style="margin:0 0 8px 0;">Settings / Options</h3>
+    <label>Amount: <input id="amt" type="number" value="{state["amount"]}" style="width:70px;"></label>
+    <label>Leverage: <select id="lev"><option value="5" {'selected' if state["leverage"]==5 else ''}>5x</option><option value="10" {'selected' if state["leverage"]==10 else ''}>10x</option><option value="20" {'selected' if state["leverage"]==20 else ''}>20x</option></select></label><br><br>
+    <label>Take Profit %: <input id="tp" type="number" step="0.05" value="{state["take_profit"]}" style="width:60px;"></label>
+    <label>Stop Loss %: <input id="sl" type="number" step="0.05" value="{state["stop_loss"]}" style="width:60px;"></label><br><br>
+    <label>Strategy: <select id="strat"><option value="SAFE" {'selected' if state["strategy"]=='SAFE' else ''}>SAFE</option><option value="BALANCED" {'selected' if state["strategy"]=='BALANCED' else ''}>BALANCED</option><option value="AGGRESSIVE" {'selected' if state["strategy"]=='AGGRESSIVE' else ''}>AGGRESSIVE</option></select></label>
+    <label>Coin: <select id="coin"><option>BTC/INR</option><option>ETH/INR</option><option>SOL/INR</option></select></label><br><br>
+    <button onclick="saveSet()" style="width:100%;padding:10px;background:#007bff;color:white;border:none;border-radius:8px;">Settings Save Karo</button>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;">
+    <button style="flex:1;padding:12px;background:green;color:white;border:none;border-radius:8px;font-weight:bold;" onclick="trade('LONG')">LONG Lagao</button>
+    <button style="flex:1;padding:12px;background:red;color:white;border:none;border-radius:8px;font-weight:bold;" onclick="trade('SHORT')">SHORT Lagao</button>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;">
+    <button style="flex:1;padding:10px;" onclick="trade('CLOSE')">Band Karo</button>
+    <button style="flex:1;padding:10px;background:#ff9800;color:white;border:none;border-radius:8px;" onclick="toggleAuto()">AUTO ON/OFF</button>
+    <button style="flex:1;padding:10px;" onclick="resetBal()">Reset 10000</button>
+    </div>
+    <div style="background:white;padding:10px;border-radius:10px;margin-top:10px;"><h3>Open Trade</h3>{open_html}</div>
+    <div style="background:white;padding:10px;border-radius:10px;margin-top:10px;"><h3>History (Last 30)</h3>{hist_html}</div>
+    <script>
+    var data=[{chart_data}];
+    var c=document.getElementById('chart'); var ctx=c.getContext('2d');
+    var min=Math.min.apply(null,data); var max=Math.max.apply(null,data);
+    ctx.beginPath(); ctx.strokeStyle='#007bff'; ctx.lineWidth=2;
+    for(var i=0;i<data.length;i++){{ var x=i/(data.length-1)*340; var y=110-((data[i]-min)/(max-min||1))*100; if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }} ctx.stroke();
+    function trade(s){{ fetch('/trade',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{side:s}})}}).then(()=>location.reload()); }}
+    function toggleAuto(){{ fetch('/auto',{{method:'POST'}}).then(()=>location.reload()); }}
+    function resetBal(){{ fetch('/reset',{{method:'POST'}}).then(()=>location.reload()); }}
+    function saveSet(){{ var d={{amount:document.getElementById('amt').value, leverage:document.getElementById('lev').value, take_profit:document.getElementById('tp').value, stop_loss:document.getElementById('sl').value, strategy:document.getElementById('strat').value, coin:document.getElementById('coin').value}}; fetch('/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(()=>location.reload()); }}
+    setTimeout(()=>location.reload(), 15000);
+    </script></body></html>
+    """
+
+@app.route("/trade", methods=["POST"])
+def do_trade():
+    d = request.json
+    side = d.get("side")
+    if side == "CLOSE":
+        if state["open_trade"]:
+            close_trade("Manual Close")
+            return jsonify({"success": True})
+        return jsonify({"error": "No open trade"})
+    return jsonify(open_trade(side))
+
+@app.route("/auto", methods=["POST"])
+def do_auto():
+    state["auto"] = not state["auto"]
+    return jsonify({"auto": state["auto"]})
+
+@app.route("/reset", methods=["POST"])
+def do_reset():
+    state["balance"] = WALLET_START
+    state["locked"] = 0.0
+    state["open_trade"] = None
+    state["history"] = []
+    state["total_trades"] = 0
+    state["total_profit"] = 0.0
+    state["win"] = 0
+    state["loss"] = 0
+    return jsonify({"success": True})
+
+@app.route("/settings", methods=["POST"])
+def do_settings():
+    d = request.json
+    try:
+        state["amount"] = float(d.get("amount", 150))
+        state["max_amount"] = state["amount"]
+        state["leverage"] = int(d.get("leverage", 10))
+        state["take_profit"] = float(d.get("take_profit", 0.25))
+        state["stop_loss"] = float(d.get("stop_loss", 0.50))
+        state["strategy"] = d.get("strategy", "BALANCED")
+        state["coin"] = d.get("coin", "BTC/INR")
+    except Exception as e:
+        print(e)
+    return jsonify({"success": True})
+
+@app.route("/status")
+def status():
+    sig, rsi, e9, e21 = decide_signal()
+    return jsonify({"state": state, "price": get_btc_price(), "signal": sig, "rsi": rsi, "ema9": e9, "ema21": e21, "chart": list(price_history)[-50:]})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
