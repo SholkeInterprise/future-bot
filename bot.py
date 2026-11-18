@@ -126,3 +126,96 @@ def auto_loop():
 
 threading.Thread(target=auto_loop, daemon=True).start()
 
+@app.route("/")
+def home():
+    price = get_btc_price()
+    t = state["open_trade"]
+    live_pnl = 0
+    if t:
+        if t["side"] == "LONG":
+            live_pnl = (price - t["entry"]) / t["entry"] * 100 * DEFAULT_LEVERAGE * t["amount"] / 100
+        else:
+            live_pnl = (t["entry"] - price) / t["entry"] * 100 * DEFAULT_LEVERAGE * t["amount"] / 100
+
+    hist_html = ""
+    for h in state["history"][:20]:
+        color = "green" if h["pnl"] >= 0 else "red"
+        hist_html += f'<div style="border-bottom:1px solid #ddd;padding:8px;display:flex;justify-content:space-between;"><span>{h["side"]} BTC {h["time"]}</span><span style="color:{color};font-weight:bold;">{h["pnl"]}</span></div>'
+
+    open_html = "No Open Trade"
+    if t:
+        open_html = f'<div style="background:#fff3cd;padding:10px;border-radius:8px;"><b>{t["side"]} BTC</b> Entry: {t["entry"]:.2f} Amt: {t["amount"]} Lev: {t["leverage"]}x<br>Live PnL: {live_pnl:.2f}</div>'
+
+    return f"""
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Future Bot</title></head>
+    <body style="font-family:Arial;padding:15px;background:#f5f5f5;">
+    <h2>Future Bot - {state["mode"]} MODE</h2>
+    <p>BTC Price: <b>{price:.2f}</b></p>
+    <div style="background:white;padding:12px;border-radius:10px;">
+    <p>Available Wallet: <b>{state["balance"]:.2f}</b> | Locked: {state["locked"]:.2f}</p>
+    <p>Total Trades: {state["total_trades"]} | Total Profit: {state["total_profit"]:.2f}</p>
+    <p>Auto: <b>{'ON' if state["auto"] else 'OFF'}</b></p>
+    <label>Amount: <input id="amt" type="number" value="{state["amount"]}" style="width:80px;"></label>
+    <button onclick="setAmt()">Set Amount</button>
+    </div><br>
+    <div style="display:flex;gap:10px;">
+    <button style="flex:1;padding:12px;background:green;color:white;border:none;border-radius:8px;" onclick="trade('LONG')">LONG Lagao</button>
+    <button style="flex:1;padding:12px;background:red;color:white;border:none;border-radius:8px;" onclick="trade('SHORT')">SHORT Lagao</button>
+    </div><br>
+    <div style="display:flex;gap:10px;">
+    <button style="flex:1;padding:10px;" onclick="trade('CLOSE')">Band Karo</button>
+    <button style="flex:1;padding:10px;" onclick="toggleAuto()">AUTO ON/OFF</button>
+    <button style="flex:1;padding:10px;" onclick="resetBal()">Wallet Reset 10000</button>
+    </div><br>
+    <div style="background:white;padding:10px;border-radius:10px;"><h3>Open Trade</h3>{open_html}</div><br>
+    <div style="background:white;padding:10px;border-radius:10px;"><h3>History</h3>{hist_html}</div>
+    <script>
+    function trade(s){{ fetch('/trade',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{side:s}})}}).then(()=>location.reload()); }}
+    function toggleAuto(){{ fetch('/auto',{{method:'POST'}}).then(()=>location.reload()); }}
+    function resetBal(){{ fetch('/reset',{{method:'POST'}}).then(()=>location.reload()); }}
+    function setAmt(){{ var v=document.getElementById('amt').value; fetch('/set_amount',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{amount:v}})}}).then(()=>location.reload()); }}
+    </script></body></html>
+    """
+
+@app.route("/trade", methods=["POST"])
+def do_trade():
+    d = request.json
+    side = d.get("side")
+    if side == "CLOSE":
+        if state["open_trade"]:
+            close_trade("Manual Close")
+            return jsonify({"success": True})
+        return jsonify({"error": "No open trade"})
+    return jsonify(open_trade(side))
+
+@app.route("/auto", methods=["POST"])
+def do_auto():
+    state["auto"] = not state["auto"]
+    return jsonify({"auto": state["auto"]})
+
+@app.route("/reset", methods=["POST"])
+def do_reset():
+    state["balance"] = WALLET_START
+    state["locked"] = 0.0
+    state["open_trade"] = None
+    state["history"] = []
+    state["total_trades"] = 0
+    state["total_profit"] = 0.0
+    return jsonify({"success": True})
+
+@app.route("/set_amount", methods=["POST"])
+def do_set():
+    try:
+        state["amount"] = float(request.json.get("amount", 150))
+        state["max_amount"] = state["amount"]
+    except:
+        pass
+    return jsonify({"amount": state["amount"]})
+
+@app.route("/status")
+def status():
+    return jsonify(state)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
