@@ -118,7 +118,7 @@ def open_trade(side, coin="BTC"):
     state["open_trade"] = nt
     state["trades"] += 1
     return {"success": True}
-    def auto_loop():
+    def auto_loop():    
     while True:
         try:
             if state["auto"]:
