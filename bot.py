@@ -190,7 +190,6 @@ def home():
     price = get_price(coin)
     chg = get_24h_change()
     t = state["open_trade"]
-    # Live PnL
     live_net = 0
     live_gross = 0
     trailing_high = price
@@ -211,7 +210,6 @@ def home():
         else:
             close_target = t["low"] * (1 + float(state["close_pct"])/100)
 
-    # TP / SL Preview
     tp_price = price * (1 + float(state["tp_pct"])/100) if not t else t["entry"] * (1 + float(state["tp_pct"])/100)
     sl_price = price * (1 - float(state["sl_pct"])/100) if not t else t["entry"] * (1 - float(state["sl_pct"])/100)
     if t and t["side"] == "SHORT":
@@ -230,9 +228,9 @@ def home():
     if not hist_html:
         hist_html = "<p style='text-align:center;color:#888;'>No History Yet</p>"
 
-    chart_data = ",".join([str(int(p)) for p in list(price_history)[-50:]])
+    chart_data = ",".join([str(int(p)) for p in list(price_history)[-100:]])
     signal = "SHORT" if chg < 0 else "LONG"
-    open_html = f'<p style="text-align:center;">Open: {coin} {t["side"] if t else "NONE"} @ {t["entry"]:.2f} | Amt {t["amount"]} Lev {t["leverage"]}x | Fee {t["fee"]:.2f}</p><p style="text-align:center;">Trailing: High {trailing_high:.2f} | Entry High {entry_high:.2f} | Low {trailing_low:.2f} | Close Target = High - {state["close_pct"]}% = {close_target:.2f}</p><p style="text-align:center;">Live PnL Net (Fee kat ke): <b>{live_net:.2f}</b> | Gross {live_gross:.2f}</p>' if t else "<p style='text-align:center;'>No Open Trade</p>"
+    open_html = f'<p style="text-align:center;">Open: {coin} {t["side"] if t else "NONE"} @ {t["entry"]:.2f} | Amt {t["amount"]} Lev {t["leverage"]}x | Fee {t["fee"]:.2f}</p><p style="text-align:center;">Trailing: High {trailing_high:.2f} | Entry High {entry_high:.2f} | Low {trailing_low:.2f} | Close Target = High - {state["close_pct"]}% = {close_target:.2f}</p><p style="text-align:center;">Live PnL Net (Fee kat ke): <b id="livePnl">{live_net:.2f}</b> | Gross {live_gross:.2f}</p>' if t else "<p style='text-align:center;'>No Open Trade</p>"
 
     coins_btn = ""
     for c in ["BTC","ETH","SOL","DOGE","XRP","ADA","BNB"]:
@@ -245,7 +243,7 @@ def home():
     <body style="font-family:Arial;padding:10px;background:#fff;margin:0;">
     <h2 style="text-align:center;margin:5px 0;">Future Bot - 1m HIGH-LOW FIXED + Fee Cover + 24x7 AUTO</h2>
     <div style="text-align:center;margin:5px 0;">{coins_btn}</div>
-    <h3 style="text-align:center;">{coin} : Rs.{price:,.2f} | {signal} | 24h {chg:.2f}%</h3>
+    <h3 style="text-align:center;">{coin} : Rs.<span id="livePrice">{price:,.2f}</span> | <span id="liveSignal">{signal}</span> | 24h <span id="liveChg">{chg:.2f}%</span></h3>
     <p style="text-align:center;font-size:12px;">LIVE pe SHORT | Low pe LONG | Close = 0.25% andar | Fee +10 kat ke Net +15 Target | Chhoti Candle Skip</p>
     <p style="text-align:center;background:#fff8e1;padding:8px;border-radius:8px;">Available Wallet: Rs.{state["balance"]:,.2f}<br>Locked: Rs.{state["locked"]:,.2f} | Total: Rs.{state["total"]:,.2f}</p>
     {open_html}
@@ -278,31 +276,101 @@ def home():
     <button onclick="resetBal()" style="flex:1;padding:12px;background:#eee;border:none;border-radius:8px;">Wallet Reset Rs.10,000</button>
     </div>
     <div style="text-align:center;margin-top:10px;">TIME FRAME: <button onclick="setTF('1m')">1m</button> <button onclick="setTF('5m')">5m</button> <button onclick="setTF('15m')">15m</button> <button onclick="setTF('1h')">1h</button> <button onclick="setTF('4h')">4h</button> <button onclick="setTF('1D')">1D</button></div>
-    <div style="text-align:center;margin-top:5px;">LINE TOOL: <button>Normal</button> <button>H-Line (Price)</button> <button>V-Line (Time)</button> <button onclick="clearLines()">Lines Clear</button></div>
+    <div style="text-align:center;margin-top:5px;">LINE TOOL: <button onclick="setLine('Normal')">Normal</button> <button onclick="setLine('H')">H-Line (Price)</button> <button onclick="setLine('V')">V-Line (Time)</button> <button onclick="clearLines()">Lines Clear</button></div>
     <div style="background:white;border:1px solid #ddd;border-radius:8px;margin-top:10px;padding:5px;">
-    <canvas id="chart" width="340" height="220" style="width:100%;"></canvas>
+    <div style="display:flex;justify-content:space-between;font-size:12px;"><span>CANDLE CHART - LIVE 1m</span><span id="chartPrice" style="font-weight:bold;color:green;">Rs.{price:,.2f}</span></div>
+    <canvas id="chart" width="340" height="240" style="width:100%;background:#ffffff;"></canvas>
+    <p style="text-align:center;font-size:11px;color:#888;margin:2px;">Green Candle = Price Upar | Red Candle = Price Neeche | Har 2 sec me naya candle update</p>
     </div>
     <div style="text-align:center;margin-top:10px;"><h3>History</h3>{hist_html}</div>
     <script>
-    var data=[{chart_data}];
-    var c=document.getElementById('chart'); var ctx=c.getContext('2d');
-    var min=Math.min.apply(null,data); var max=Math.max.apply(null,data);
-    ctx.clearRect(0,0,340,220);
-    ctx.beginPath(); ctx.strokeStyle='#007bff'; ctx.lineWidth=1.5;
-    for(var i=0;i<data.length;i++){{ var x=i/(data.length-1)*340; var y=200-((data[i]-min)/(max-min||1))*180; if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }} ctx.stroke();
-    // H-Line at last price
-    ctx.beginPath(); ctx.strokeStyle='red'; ctx.setLineDash([5,5]); ctx.moveTo(0,200-((data[data.length-1]-min)/(max-min||1))*180); ctx.lineTo(340,200-((data[data.length-1]-min)/(max-min||1))*180); ctx.stroke();
+    var raw=[{chart_data}];
+    var lineMode='Normal';
+    var hLines=[]; var vLines=[];
+    function makeCandles(){{
+        var candles=[];
+        // Har 4 price point se 1 candle banega
+        for(var i=0;i<raw.length;i+=4){{
+            var chunk=raw.slice(i,i+4);
+            if(chunk.length<2) continue;
+            var o=chunk[0]; var c=chunk[chunk.length-1];
+            var h=Math.max.apply(null,chunk); var l=Math.min.apply(null,chunk);
+            candles.push({{o:o,c:c,h:h,l:l}});
+        }}
+        return candles;
+    }}
+    function drawChart(){{
+        var candles=makeCandles();
+        var c=document.getElementById('chart'); var ctx=c.getContext('2d');
+        var all=raw; var min=Math.min.apply(null,all); var max=Math.max.apply(null,all);
+        var range=(max-min)||1;
+        ctx.clearRect(0,0,340,240);
+        // Grid
+        ctx.strokeStyle='#f0f0f0'; ctx.lineWidth=1;
+        for(var g=0;g<5;g++){{ ctx.beginPath(); ctx.moveTo(0,g*48); ctx.lineTo(340,g*48); ctx.stroke(); }}
+        var cw=340/candles.length;
+        var bw=Math.max(4, cw*0.6);
+        for(var i=0;i<candles.length;i++){{
+            var cd=candles[i];
+            var x=i*cw + cw/2;
+            var yH=220-((cd.h-min)/range)*200;
+            var yL=220-((cd.l-min)/range)*200;
+            var yO=220-((cd.o-min)/range)*200;
+            var yC=220-((cd.c-min)/range)*200;
+            var isGreen=cd.c>=cd.o;
+            var col=isGreen?'#26a65b':'#e74c3c';
+            // Wick - patli line
+            ctx.strokeStyle=col; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.moveTo(x,yH); ctx.lineTo(x,yL); ctx.stroke();
+            // Body - mota candle
+            var top=Math.min(yO,yC); var hgt=Math.max(2, Math.abs(yC-yO));
+            ctx.fillStyle=col;
+            ctx.fillRect(x-bw/2, top, bw, hgt);
+            // Last candle me live dot
+            if(i==candles.length-1){{
+                ctx.beginPath(); ctx.arc(x, yC, 3, 0, 2*Math.PI); ctx.fillStyle='black'; ctx.fill();
+            }}
+        }}
+        // Last Price - Red Dashed Line
+        var lastY=220-((raw[raw.length-1]-min)/range)*200;
+        ctx.beginPath(); ctx.strokeStyle='red'; ctx.setLineDash([6,4]); ctx.moveTo(0,lastY); ctx.lineTo(340,lastY); ctx.stroke(); ctx.setLineDash([]);
+        for(var h=0;h<hLines.length;h++){{ ctx.beginPath(); ctx.strokeStyle='orange'; ctx.setLineDash([4,4]); ctx.moveTo(0,hLines[h]); ctx.lineTo(340,hLines[h]); ctx.stroke(); ctx.setLineDash([]); }}
+        for(var v=0;v<vLines.length;v++){{ ctx.beginPath(); ctx.strokeStyle='purple'; ctx.setLineDash([4,4]); ctx.moveTo(vLines[v],0); ctx.lineTo(vLines[v],240); ctx.stroke(); ctx.setLineDash([]); }}
+    }}
+    drawChart();
+    document.getElementById('chart').addEventListener('click', function(e){{
+        var rect=this.getBoundingClientRect();
+        var x=(e.clientX-rect.left)/rect.width*340;
+        var y=(e.clientY-rect.top)/rect.height*240;
+        if(lineMode=='H') hLines.push(y);
+        if(lineMode=='V') vLines.push(x);
+        drawChart();
+    }});
+    function setLine(m){{ lineMode=m; alert(m+' Line Mode ON - Chart pe click karo'); }}
+    function clearLines(){{ hLines=[]; vLines=[]; drawChart(); }}
+    setInterval(function(){{
+        fetch('/live_price').then(r=>r.json()).then(d=>{{
+            document.getElementById('livePrice').innerText=d.price.toLocaleString('en-IN',{{minimumFractionDigits:2}});
+            document.getElementById('chartPrice').innerText='Rs.'+d.price.toLocaleString('en-IN',{{minimumFractionDigits:2}});
+            document.getElementById('liveChg').innerText=d.change.toFixed(2)+'%';
+            document.getElementById('liveSignal').innerText=d.change<0?'SHORT':'LONG';
+            raw.push(d.price); if(raw.length>100) raw.shift();
+            drawChart();
+        }});
+    }}, 2000);
     function trade(s){{ fetch('/trade',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{side:s}})}}).then(()=>location.reload()); }}
     function resetBal(){{ fetch('/reset',{{method:'POST'}}).then(()=>location.reload()); }}
     function setCoin(c){{ fetch('/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{auto_coin:c, coin:c}})}}).then(()=>location.reload()); }}
     function setTF(tf){{ fetch('/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{timeframe:tf}})}}).then(()=>location.reload()); }}
-    function clearLines(){{ location.reload(); }}
     function saveAll(){{ var d={{amount:document.getElementById('amt').value, leverage:document.getElementById('lev').value, tp_pct:document.getElementById('tp').value, sl_pct:document.getElementById('sl').value, trail_pct:document.getElementById('trail').value, close_pct:document.getElementById('close').value, min_range_pct:document.getElementById('minrange').value, auto:document.getElementById('auto').value=='ON', auto_pct:document.getElementById('autopct').value}}; fetch('/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(()=>location.reload()); }}
-    // Auto save on change
     document.querySelectorAll('input,select').forEach(e=>e.addEventListener('change', saveAll));
-    setTimeout(()=>location.reload(), 15000);
     </script></body></html>
     """
+
+@app.route("/live_price")
+def live_price():
+    p = get_price(state["auto_coin"])
+    return jsonify({"price": p, "change": get_24h_change(), "coin": state["auto_coin"]})
 
 @app.route("/trade", methods=["POST"])
 def do_trade():
