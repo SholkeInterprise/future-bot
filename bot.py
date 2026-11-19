@@ -118,7 +118,7 @@ def open_trade(side, coin="BTC"):
     state["open_trade"] = nt
     state["trades"] += 1
     return {"success": True}
-    def auto_loop():    
+def auto_loop():
     while True:
         try:
             if state["auto"]:
@@ -348,7 +348,7 @@ def home():
     H.append("<button onclick=\"setLine('H')\">H-Line</button> ")
     H.append("<button onclick=\"setLine('V')\">V-Line</button> ")
     H.append("<button onclick='clearLines()'>Clear</button></div>")
-        H.append("<div style='background:#fff;")
+    H.append("<div style='background:#fff;")
     H.append("border:1px solid #ddd;")
     H.append("margin-top:10px;'>")
     H.append("<div style='display:flex;")
@@ -516,74 +516,4 @@ def home():
     H.append("function resetBal(){")
     H.append("fetch('/reset',{method:'POST'})")
     H.append(".then(()=>location.reload());}")
-    H.append("function setCoin(c){")
-    H.append("fetch('/settings',{method:'POST',")
-    H.append("headers:{'Content-Type':'application/json'},")
-    H.append("body:JSON.stringify({coin:c})})")
-    H.append(".then(()=>location.reload());}")
-    H.append("function setTF(tf){curTF=tf;loadCandles();}")
-    H.append("function saveAll(){")
-    H.append("var d={};")
-    H.append("d.amount=document.getElementById('amt').value;")
-    H.append("d.leverage=document.getElementById('lev').value;")
-    H.append("d.tp=document.getElementById('tp').value;")
-    H.append("d.sl=document.getElementById('sl').value;")
-    H.append("d.close=document.getElementById('close').value;")
-    H.append("d.minr=document.getElementById('minr').value;")
-    H.append("fetch('/settings',{method:'POST',")
-    H.append("headers:{'Content-Type':'application/json'},")
-    H.append("body:JSON.stringify(d)})")
-    H.append(".then(()=>location.reload());}")
-    H.append("document.querySelectorAll('input,select')")
-    H.append(".forEach(e=>e.addEventListener('change',saveAll));")
-    H.append("</script></body></html>")
-    return "".join(H)
-@app.route("/live_price")
-def live_price():
-    p = get_price(state["coin"])
-    return jsonify({"price": p, "change": get_chg()})
-@app.route("/trade", methods=["POST"])
-def do_trade():
-    d = request.json
-    side = d.get("side")
-    if side == "CLOSE":
-        if state["open_trade"]:
-            close_trade("Manual Close")
-            return jsonify({"success": True})
-        return jsonify({"error": "No trade"})
-    return jsonify(open_trade(side, state["coin"]))
-@app.route("/reset", methods=["POST"])
-def do_reset():
-    state["balance"] = WALLET
-    state["locked"] = 0.0
-    state["total"] = WALLET
-    state["open_trade"] = None
-    state["history"] = []
-    return jsonify({"success": True})
-@app.route("/settings", methods=["POST"])
-def do_settings():
-    d = request.json
-    try:
-        if "amount" in d:
-            state["amount"] = float(d["amount"])
-        if "leverage" in d:
-            state["leverage"] = int(d["leverage"])
-        if "tp" in d:
-            state["tp"] = float(d["tp"])
-        if "sl" in d:
-            state["sl"] = float(d["sl"])
-        if "close" in d:
-            state["close"] = float(d["close"])
-        if "minr" in d:
-            state["minr"] = float(d["minr"])
-        if "coin" in d:
-            state["coin"] = d["coin"]
-    except Exception as e:
-        print(e)
-    return jsonify({"success": True})
-@app.route("/status")
-def status():
-    return jsonify({"state": state, "price": get_price()})
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    H.app
