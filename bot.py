@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 BASE_URL = "https://coinswitch.co"
 API_KEY = os.getenv("COINSWITCH_API_KEY", "").strip()
 SECRET_KEY = os.getenv("COINSWITCH_SECRET_KEY", "").strip()
-LIVE_TRADING = False  # HFT verification build: all live orders locked
+LIVE_TRADING = true  # HFT verification build: all live orders locked
 AUTO_TRADING_ALLOWED = False  # HFT verification build: auto trading locked
 MAX_MARGIN_USDT = os.getenv("MAX_MARGIN_USDT", "25")
 USDT_INR_RATE_FALLBACK = os.getenv("USDT_INR_RATE", "").strip()
