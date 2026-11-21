@@ -400,7 +400,7 @@ def protective_orders(coin, side, entry, info):
 
 def open_live(coin, side, margin, leverage, auto=False, candle_low=0, candle_high=0):
     margin = D(margin)
-    if margin < Decimal("5"):
+    if margin < Decimal("0.1"):
         raise CoinSwitchError("Starter safety limit: margin kam se kam 5 USDT hona chahiye.")
     if margin > D(MAX_MARGIN_USDT):
         raise CoinSwitchError(f"Starter safety limit: per-trade margin {D(MAX_MARGIN_USDT)} USDT se zyada nahi ho sakta. MAX_MARGIN_USDT env badalne se pehle risk samjhein.")
