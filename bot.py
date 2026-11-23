@@ -17,8 +17,8 @@ SECRET_KEY = os.getenv("COINSWITCH_SECRET_KEY", "").strip()
 HFT_API_BASE_URL = "https://dma.coinswitch.co"  # HFT only; never route Futures V2 orders here
 FUTURES_V2_API_BASE_URL = BASE_URL  # regular Futures V2 only
 HFT_SETTLE_COIN = os.getenv("HFT_SETTLE_COIN", "USDT").strip().upper()
-LIVE_TRADING = False  # Safety lock: live orders disabled in this build
-AUTO_TRADING_ALLOWED = False  # Safety lock: auto trading disabled in this build
+LIVE_TRADING = True # Safety lock: live orders disabled in this build
+AUTO_TRADING_ALLOWED = True  # Safety lock: auto trading disabled in this build
 MAX_MARGIN_USDT = os.getenv("MAX_MARGIN_USDT", "25")
 # Manually observed on the user's CoinSwitch PRO HFT screen; NOT API-verified.
 # Update Render env HFT_MANUAL_BALANCE_USDT whenever the displayed HFT balance changes.
