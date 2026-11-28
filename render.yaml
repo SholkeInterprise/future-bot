@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: coinswitch-futures-v2-bot
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn bot:app --workers 1 --threads 4 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: LIVE_TRADING
+        value: "NO"
+      - key: AUTO_TRADING_ALLOWED
+        value: "NO"
+      - key: DASHBOARD_USER
+        value: "admin"
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: COINSWITCH_API_KEY
+        sync: false
+      - key: COINSWITCH_SECRET_KEY
+        sync: false
+      - key: MIN_MARGIN_USDT
+        value: "1"
+      - key: MAX_MARGIN_USDT
+        value: "50"
+      - key: DEFAULT_MARGIN_USDT
+        value: "1"
+      - key: DEFAULT_LEVERAGE
+        value: "10"
+      - key: MAX_DAILY_LOSS_USDT
+        value: "5"
+      - key: MAX_TRADES_PER_DAY
+        value: "20"
+      - key: MAX_CONSEC_LOSSES
+        value: "3"
